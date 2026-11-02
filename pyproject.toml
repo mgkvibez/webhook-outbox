@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webhook-outbox"
+version = "0.1.0"
+description = "Deliver outgoing webhooks exactly once: store the intent, sign it, retry it, dead-letter it, replay it."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "mgkvibez" }]
+keywords = ["webhooks", "outbox", "delivery", "retries", "dead-letter", "hmac"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "License :: OSI Approved :: MIT License",
+  "Environment :: Console",
+  "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+outbox = "webhook_outbox.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mgkvibez/webhook-outbox"
+
+[tool.setuptools.packages.find]
+include = ["webhook_outbox*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+# Pinned explicitly: this repo must lint identically on a developer machine and in CI,
+# whatever ruff version happens to be installed.
+select = ["E4", "E7", "E9", "F", "I", "B", "C4", "SIM", "UP"]
+ignore = [
+  "BLE001",   # a sender and a demo receiver catch broadly on purpose; see their comments
+  "UP031",    # %-formatting is deliberate: these are CLI lines and messages, not logging calls
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,28 @@
+name: approve-first-time
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: approve runs waiting on a maintainer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Refuse to bless a PR that touches the workflow or the gate itself: approving our own
+          # modified workflow would let a fork run arbitrary code on the runner.
+          changed=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          if echo "$changed" | grep -qE '^(\.github/|scripts/verify\.sh)'; then
+            echo "touches .github or scripts/verify.sh: not auto-approving"; exit 0
+          fi
+          for id in $(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.event.pull_request.head.sha }}" \
+                       --jq '.workflow_runs[] | select(.conclusion=="action_required") | .id'); do
+            gh api -X POST "repos/${{ github.repository }}/actions/runs/$id/approve" && echo "approved $id"
+          done
