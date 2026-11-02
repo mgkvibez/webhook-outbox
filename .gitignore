@@ -11,3 +11,4 @@ dist/
 .gate-dist/
 .gate-pytest.log
 .gate-build.log
+.art/
