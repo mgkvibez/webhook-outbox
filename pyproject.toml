@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webhook-outbox"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deliver outgoing webhooks exactly once: store the intent, sign it, retry it, dead-letter it, replay it."
 readme = "README.md"
 requires-python = ">=3.9"

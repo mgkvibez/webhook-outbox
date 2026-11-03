@@ -116,6 +116,37 @@ between retries would fail for no reason.
 **Failures are recorded, never swallowed.** A sender never raises: an unreachable host is an
 ordinary outcome and becomes a retry with the error text stored on the row.
 
+## In an async service
+
+A FastAPI app must not block its event loop on a socket:
+
+```python
+outbox = Outbox(SQLiteStore("outbox.db"),
+                secret=os.environ["WEBHOOK_SECRET"],
+                async_sender=ThreadedAsyncSender())
+
+await outbox.deliver_due_async()
+```
+
+`ThreadedAsyncSender` runs the synchronous sender in a thread, which is the whole fix. The
+package still installs with no dependencies, and you can pass a real async client through
+`async_sender=` the day you want one. Both passes share one claim-and-record path, so switching
+between them cannot change how a delivery is recorded, retried or buried.
+
+## Watching it in production
+
+```python
+events = []                                    # or a Counter, an OTel span, a log line
+outbox = Outbox(store, on_event=events.append)
+
+outbox.deliveries(status="dead")               # filter by status/endpoint/event/since
+outbox.metrics()                               # {"attempts": 4, "delivered": 3, "pending": 0}
+```
+
+Events are `attempt`, `delivered`, `retried` and `dead`, each carrying the delivery id, endpoint,
+event name, attempt number, status and error. A hook that raises is swallowed on purpose: a
+broken dashboard must never take deliveries down with it.
+
 ## Exit contract
 
 `0` nothing needs attention, `1` something does (retries waiting or dead letters), `2` the command
@@ -133,7 +164,7 @@ one stops a notification from being lost or sent five times.
 ## Tests
 
 ```bash
-python -m pytest -q        # 72 tests
+python -m pytest -q        # 88 tests
 bash scripts/verify.sh     # the gate: imports, version, tests, CLI contract, zero deps
 ```
 

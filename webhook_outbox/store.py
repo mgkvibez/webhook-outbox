@@ -206,6 +206,29 @@ class SQLiteStore:
                     "SELECT id FROM deliveries ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [d for d in (self._row(r[0]) for r in rows) if d is not None]
 
+    def query(self, status: str | None = None, endpoint: str | None = None,
+              event: str | None = None, since: float | None = None,
+              limit: int = 50) -> builtins.list[Delivery]:
+        """Newest first. Every filter is optional, so this answers "what happened" questions
+        without a second schema."""
+        sql = ["SELECT id FROM deliveries"]
+        where: list[str] = []
+        params: list[Any] = []
+        for column, value in (("status", status), ("endpoint", endpoint), ("event", event)):
+            if value is not None:
+                where.append("%s = ?" % column)
+                params.append(value)
+        if since is not None:
+            where.append("created >= ?")
+            params.append(since)
+        if where:
+            sql.append("WHERE " + " AND ".join(where))
+        sql.append("ORDER BY id DESC LIMIT ?")
+        params.append(int(limit))
+        with self._lock:
+            rows = self._conn.execute(" ".join(sql), params).fetchall()
+        return [d for d in (self._row(r[0]) for r in rows) if d is not None]
+
     def dead_letters(self, limit: int = 50) -> builtins.list[Delivery]:
         return self.list(DEAD, limit)
 

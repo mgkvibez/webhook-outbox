@@ -6,6 +6,8 @@ has to catch, because the whole point is to record it and try again later.
 
 from __future__ import annotations
 
+import asyncio
+
 import socket
 import time
 import urllib.error
@@ -33,7 +35,7 @@ class HttpSender:
     """POST JSON with a timeout. Redirects are not followed on purpose: a webhook endpoint that
     redirects is misconfigured, and quietly delivering somewhere else hides that."""
 
-    def __init__(self, timeout: float = 10.0, user_agent: str = "webhook-outbox/0.1.0") -> None:
+    def __init__(self, timeout: float = 10.0, user_agent: str = "webhook-outbox/0.2.0") -> None:
         self.timeout = timeout
         self.user_agent = user_agent
 
@@ -68,3 +70,23 @@ class HttpSender:
         except Exception as exc:                     # a sender must never raise
             return DeliveryResult(error=f"{type(exc).__name__}: {exc}",
                                   duration_ms=int((time.time() - started) * 1000))
+
+
+class ThreadedAsyncSender:
+    """An async facade over any synchronous sender, for frameworks that are async-first.
+
+    Deliberately does not add an async HTTP client: requiring aiohttp or httpx to install this
+    package would make the dependency decision for every user. ``asyncio.to_thread`` keeps the
+    event loop free during the socket wait, which is the only thing that actually needed fixing.
+
+    .. code-block:: python
+
+        outbox = Outbox(store, sender=HttpSender(), async_sender=ThreadedAsyncSender())
+        await outbox.deliver_due_async()
+    """
+
+    def __init__(self, sender: HttpSender | None = None) -> None:
+        self.sender = sender if sender is not None else HttpSender()
+
+    async def send(self, endpoint: str, body: bytes, headers: dict[str, str]) -> DeliveryResult:
+        return await asyncio.to_thread(self.sender.send, endpoint, body, headers)

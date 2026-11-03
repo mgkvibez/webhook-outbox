@@ -1,3 +1,19 @@
+## v0.2.0 - 2026-11-03
+
+- Async delivery: `await outbox.deliver_due_async()`. The default `ThreadedAsyncSender` wraps
+  whatever synchronous sender you have with `asyncio.to_thread`, so an async-first service
+  (FastAPI and friends) stops blocking its event loop without this package taking on aiohttp or
+  httpx as a dependency. Both passes share one claim-and-record path, so a delivery cannot behave
+  differently depending on which one a worker uses.
+- The delivery log is queryable: `outbox.deliveries(status=..., endpoint=..., event=...,
+  since=..., limit=...)`, newest first.
+- `on_event` hook and `outbox.metrics()`. Events are attempt, delivered, retried and dead, each
+  carrying the delivery id, endpoint, event name, attempt number, status and error. A hook that
+  raises is ignored: observability must not become a failure mode.
+- 16 new tests, 88 total. Two exist because the async path is easy to get subtly wrong: a signed
+  delivery through `deliver_due_async` must carry the same `X-Signature`, and two concurrent
+  passes at `limit=1` must send two different deliveries, never one twice.
+
 ## v0.1.0 - 2026-11-02
 
 - First release. `webhook-outbox` is the outbound half of the webhook problem: the transactional

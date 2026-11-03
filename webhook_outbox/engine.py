@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Union
 
 from .backoff import DEAD, DELIVERED, RetryPolicy, classify
-from .sender import HttpSender
+from .sender import HttpSender, ThreadedAsyncSender
 from .sign import HEADER as SIGNATURE_HEADER
 from .sign import sign
 from .store import Delivery, SQLiteStore
@@ -47,13 +47,19 @@ class Outbox:
 
     def __init__(self, store: SQLiteStore, sender: HttpSender | None = None,
                  policy: RetryPolicy | None = None, secret: SecretSource = None,
-                 lease_seconds: float = 60.0, clock: Callable[[], float] = time.time) -> None:
+                 lease_seconds: float = 60.0, clock: Callable[[], float] = time.time,
+                 async_sender: Any = None,
+                 on_event: Optional[Callable[[dict[str, Any]], None]] = None) -> None:
         self.store = store
         self.sender = sender if sender is not None else HttpSender()
         self.policy = policy if policy is not None else RetryPolicy()
         self.secret = secret
         self.lease_seconds = lease_seconds
         self.clock = clock
+        self.async_sender = async_sender if async_sender is not None else ThreadedAsyncSender(self.sender)
+        self.on_event = on_event
+        #: In-process totals since this object was built; durable history lives in the store.
+        self.counters: dict[str, int] = {"attempts": 0, "delivered": 0, "retried": 0, "dead": 0}
 
     # -- writing ---------------------------------------------------------------
 
@@ -70,23 +76,46 @@ class Outbox:
     # -- delivering ------------------------------------------------------------
 
     def deliver_due(self, limit: int = 10) -> RunSummary:
-        """One pass. Claims what is due, sends it, records the outcome of each."""
+        """One pass, synchronous. Claims what is due, sends it, records the outcome of each."""
         summary = RunSummary()
         for delivery in self.store.claim_due(limit, self.lease_seconds, now=self.clock()):
             summary.claimed += 1
-            outcome = self._deliver(delivery, summary)
-            if outcome == DELIVERED:
-                summary.delivered += 1
-            elif outcome == DEAD:
-                summary.dead += 1
-            else:
-                summary.retried += 1
+            self._emit("attempt", delivery)
+            body = delivery.body
+            result = self.sender.send(delivery.endpoint, body, self._headers(delivery, body))
+            self._record(delivery, result, summary)
         return summary
 
-    def _deliver(self, delivery: Delivery, summary: RunSummary) -> str:
-        body = delivery.body
-        headers = self._headers(delivery, body)
-        result = self.sender.send(delivery.endpoint, body, headers)
+    async def deliver_due_async(self, limit: int = 10) -> RunSummary:
+        """One pass, awaiting an async sender. Same claim and same recording path as the
+        synchronous version, so a delivery cannot behave differently depending on which one
+        a worker happens to use."""
+        summary = RunSummary()
+        for delivery in self.store.claim_due(limit, self.lease_seconds, now=self.clock()):
+            summary.claimed += 1
+            self._emit("attempt", delivery)
+            body = delivery.body
+            result = await self.async_sender.send(
+                delivery.endpoint, body, self._headers(delivery, body))
+            self._record(delivery, result, summary)
+        return summary
+
+    def _record(self, delivery: Delivery, result: Any, summary: RunSummary) -> None:
+        verdict = self._tally(delivery, result, summary)
+        if verdict == DELIVERED:
+            summary.delivered += 1
+            self.counters["delivered"] += 1
+            self._emit("delivered", delivery, status=result.status)
+        elif verdict == DEAD:
+            summary.dead += 1
+            self.counters["dead"] += 1
+            self._emit("dead", delivery, status=result.status, error=result.error)
+        else:
+            summary.retried += 1
+            self.counters["retried"] += 1
+            self._emit("retried", delivery, status=result.status, error=result.error)
+
+    def _tally(self, delivery: Delivery, result: Any, summary: RunSummary) -> str:
         verdict = classify(result.status, result.error)
         stamp = self.clock()
 
@@ -133,7 +162,35 @@ class Outbox:
             return self.secret(endpoint)
         return self.secret
 
+    def _emit(self, kind: str, delivery: Delivery, **fields: Any) -> None:
+        """Report one step to whoever is watching. A hook that raises must never stop a
+        delivery: observability is not allowed to become a failure mode."""
+        if kind == "attempt":
+            self.counters["attempts"] += 1
+        if self.on_event is None:
+            return
+        payload = {"event": kind, "delivery_id": delivery.id, "endpoint": delivery.endpoint,
+                   "name": delivery.event, "attempt": delivery.attempts}
+        payload.update(fields)
+        try:
+            self.on_event(payload)
+        except Exception:                 # noqa: BLE001 - a broken hook is not a broken send
+            pass
+
     # -- reading ---------------------------------------------------------------
+
+    def deliveries(self, status: str | None = None, endpoint: str | None = None,
+                   event: str | None = None, since: float | None = None,
+                   limit: int = 50) -> list[Delivery]:
+        """The delivery log, newest first, filtered however you need it."""
+        return self.store.query(status=status, endpoint=endpoint, event=event,
+                                since=since, limit=limit)
+
+    def metrics(self) -> dict[str, Any]:
+        """Counters for this worker plus the durable depth of the queue."""
+        snapshot: dict[str, Any] = dict(self.counters)
+        snapshot.update(self.store.stats(now=self.clock()))
+        return snapshot
 
     def stats(self) -> dict[str, Any]:
         return self.store.stats(now=self.clock())
