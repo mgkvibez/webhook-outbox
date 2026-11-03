@@ -7,7 +7,6 @@ has to catch, because the whole point is to record it and try again later.
 from __future__ import annotations
 
 import asyncio
-
 import socket
 import time
 import urllib.error

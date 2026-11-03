@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Union
@@ -49,7 +50,7 @@ class Outbox:
                  policy: RetryPolicy | None = None, secret: SecretSource = None,
                  lease_seconds: float = 60.0, clock: Callable[[], float] = time.time,
                  async_sender: Any = None,
-                 on_event: Optional[Callable[[dict[str, Any]], None]] = None) -> None:
+                 on_event: Callable[[dict[str, Any]], None] | None = None) -> None:
         self.store = store
         self.sender = sender if sender is not None else HttpSender()
         self.policy = policy if policy is not None else RetryPolicy()
@@ -172,10 +173,9 @@ class Outbox:
         payload = {"event": kind, "delivery_id": delivery.id, "endpoint": delivery.endpoint,
                    "name": delivery.event, "attempt": delivery.attempts}
         payload.update(fields)
-        try:
+        # A broken hook is not a broken send, so its failure is intentionally invisible here.
+        with contextlib.suppress(Exception):
             self.on_event(payload)
-        except Exception:                 # noqa: BLE001 - a broken hook is not a broken send
-            pass
 
     # -- reading ---------------------------------------------------------------
 
