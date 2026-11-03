@@ -8,10 +8,21 @@ dead-letter queue, and replay it when the far end finally comes back.
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Every SaaS that sends webhooks hand-rolls the same five things: sign the payload, retry with
-backoff, dedupe, dead-letter, expose a delivery log. Servers exist for this (Svix, Convoy, Hook0)
-but in Python there was no library, so the choice was a service or a homegrown `requests.post`
-inside a `try`. This is the library, in the transactional-outbox shape: nothing is sent until the
-intent is durably written, so a crash between the charge and the notification loses neither.
+backoff, dedupe, dead-letter, expose a delivery log. Servers exist for this (Svix, Convoy, Hook0).
+In Python the honest options were a Django library tied to a task queue
+([django-webhook](https://github.com/danihodovic/django-webhook), MIT, retries with backoff, quiet
+since 2024) or `requests.post` inside a `try` beside whatever queue the app already runs.
+
+What was missing is the small, dependency-free engine: durable before it sends, signed, deduplicating
+by business key, ordered per endpoint, with a dead-letter queue you can replay from a shell. That is
+this package, in the transactional-outbox shape: nothing is sent until the intent is written down,
+so a crash between the charge and the notification loses neither.
+
+This is a crowded space with serious in-house implementations, and that is the point: Saleor,
+pretix, Frappe and Baserow each wrote their own before any library existed, and their design
+decisions (Frappe's fixed retry schedule, Baserow's dead-letter state, Saleor's delivery metrics)
+are worth reading before trusting this one. What is not common is doing all of it in one place,
+without a framework, without a broker, and without a service to deploy.
 
 ## Install
 
